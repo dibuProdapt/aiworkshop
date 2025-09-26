@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IoT Practice — Device Monitoring Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .scrollbar-thin::-webkit-scrollbar {height:8px; width:8px}
+  </style>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-800">
+  <div class="max-w-7xl mx-auto p-4">
+    <header class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+      <div>
+        <h1 class="text-2xl font-semibold">🔧 IoT Practice — Device Monitoring</h1>
+        <p class="text-sm text-slate-600">Simulated device dashboard — devices, telemetry, alerts, and Gemini AI insights</p>
+      </div>
+
+      <div class="flex gap-2 items-center">
+        <div class="flex items-center gap-2 bg-white p-2 rounded-xl shadow">
+          <label class="text-xs text-slate-600">Auto-refresh</label>
+          <select id="refreshSelect" class="text-sm rounded px-2 py-1 border">
+            <option value="0">Off</option>
+            <option value="5000">5s</option>
+            <option value="10000">10s</option>
+            <option value="30000">30s</option>
+            <option value="60000">60s</option>
+          </select>
+        </div>
+
+        <button id="addDeviceBtn" class="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded shadow">+ Add Demo Device</button>
+        <button id="resetBtn" class="bg-white border px-4 py-2 rounded shadow text-sm">Reset</button>
+      </div>
+    </header>
+
+    <!-- Summary + Alerts + Gemini -->
+    <section class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+      <div class="lg:col-span-2 bg-white p-4 rounded-2xl shadow flex flex-col gap-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-lg font-medium">Summary</h2>
+            <p class="text-sm text-slate-500">Live telemetry snapshot</p>
+          </div>
+          <div class="flex gap-4 items-center">
+            <div class="text-center">
+              <div class="text-xs text-slate-500">Devices</div>
+              <div id="totalDevices" class="text-2xl font-semibold">0</div>
+            </div>
+            <div class="text-center">
+              <div class="text-xs text-slate-500">Online / Offline</div>
+              <div id="onlineOffline" class="text-2xl font-semibold">0 / 0</div>
+            </div>
+            <div class="text-center">
+              <div class="text-xs text-slate-500">Alerts</div>
+              <div id="alertCount" class="text-2xl font-semibold">0</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex gap-4">
+          <div class="flex-1">
+            <h3 class="text-sm font-medium mb-2">Device Types Snapshot</h3>
+            <div id="typeBreakdown" class="flex gap-2 items-center text-sm text-slate-600"></div>
+          </div>
+
+          <div class="w-64">
+            <h3 class="text-sm font-medium mb-2">Gemini AI Insights</h3>
+            <div id="gemini" class="bg-slate-50 p-3 rounded h-28 overflow-auto text-sm text-slate-700"></div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="bg-white p-4 rounded-2xl shadow">
+        <h3 class="text-lg font-medium mb-2">Alerts</h3>
+        <div id="alertsPanel" class="text-sm text-slate-700 space-y-2 max-h-44 overflow-auto scrollbar-thin"></div>
+      </aside>
+    </section>
+
+    <!-- Devices Grid -->
+    <section>
+      <div class="mb-3 flex items-center justify-between">
+        <h2 class="text-lg font-medium">Devices</h2>
+        <div class="text-sm text-slate-500">Toggle power, reboot, or inspect readings</div>
+      </div>
+
+      <div id="devicesGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+    </section>
+
+    <footer class="mt-8 text-xs text-slate-500">Demo app — single HTML file. Gemini AI creates alerts with rationale based on typical IoT heuristics.</footer>
+  </div>
+
+  <script>
+    // -------------------- Device definitions --------------------
+    const DEVICE_TYPES = [
+      {type:'Temperature Sensor', metrics:['temp'], unit:'°C'},
+      {type:'Motion Detector', metrics:['motion_count'], unit:'events'},
+      {type:'Smart Light', metrics:['power','brightness'], unit:''},
+      {type:'Env Sensor', metrics:['temp','humidity'], unit:''},
+      {type:'Door Sensor', metrics:['open_count'], unit:'events'}
+    ];
+
+    let devices = [];
+    let deviceSeq = 1;
+    let refreshTimer = null;
+
+    function now(){return Date.now();}
+    function formatTime(ts){ const d=new Date(ts); return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});} 
+
+    // -------------------- Demo device creation --------------------
+    function addDemoDevice(){
+      const dt = pickRandom(DEVICE_TYPES);
+      const id = 'D' + String(deviceSeq++).padStart(3,'0');
+      const name = dt.type.split(' ')[0] + ' #' + id.substr(1);
+      const device = {
+        id,
+        name,
+        type: dt.type,
+        metrics: generateMetrics(dt),
+        battery: randBetween(10,100),
+        online: Math.random() > 0.1,
+        powered: Math.random() > 0.05,
+        lastSeen: Date.now(),
+        createdAt: Date.now(),
+      };
+      devices.unshift(device);
+      renderAll();
+    }
+
+    function generateMetrics(dt){
+      const m = {};
+      for(const k of dt.metrics){
+        if(k==='temp') m.temp = +(randBetween(15,85) + Math.random()).toFixed(1);
+        if(k==='humidity') m.humidity = +(randBetween(20,80)+Math.random()).toFixed(1);
+        if(k==='motion_count') m.motion_count = randBetween(0,20);
+        if(k==='open_count') m.open_count = randBetween(0,10);
+        if(k==='power') m.power = Math.random()>0.2 ? 'on' : 'off';
+        if(k==='brightness') m.brightness = randBetween(0,100);
+      }
+      return m;
+    }
+
+    function randBetween(min,max){return Math.floor(Math.random()*(max-min+1))+min}
+    function pickRandom(arr){return arr[Math.floor(Math.random()*arr.length)];}
+
+    // -------------------- Render --------------------
+    function renderAll(){ renderSummary(); renderAlerts(); renderDevicesGrid(); renderGemini(); }
+
+    function renderSummary(){
+      const total = devices.length;
+      const online = devices.filter(d=>d.online).length;
+      const offline = total - online;
+      const alertCount = computeAlerts().length;
+      document.getElementById('totalDevices').textContent = total;
+      document.getElementById('onlineOffline').textContent = `${online} / ${offline}`;
+      document.getElementById('alertCount').textContent = alertCount;
+
+      // type breakdown
+      const counts = {};
+      for(const d of devices) counts[d.type] = (counts[d.type]||0) + 1;
+      const tb = document.getElementById('typeBreakdown'); tb.innerHTML = '';
+      for(const [k,v] of Object.entries(counts)){
+        const el = document.createElement('div');
+        el.className = 'px-3 py-1 rounded-full bg-slate-100 text-slate-700 text-sm';
+        el.textContent = `${k}: ${v}`;
+        tb.appendChild(el);
+      }
+      if(Object.keys(counts).length===0) tb.innerHTML = '<div class="text-slate-500">No devices yet</div>';
+    }
+
+    function computeAlerts(){
+      const alerts = [];
+      const nowTs = Date.now();
+      for(const d of devices){
+        // Offline for >30s
+        if(!d.online && (nowTs - d.lastSeen) > 30000){
+          alerts.push({id:d.id,type:'Offline', text:`${d.name} has been offline for ${Math.floor((nowTs - d.lastSeen)/1000)}s`, rationale:'Device not sending heartbeats — could be network/ power issue.'});
+        }
+        // Low battery
+        if(d.battery <= 20){
+          alerts.push({id:d.id,type:'Low Battery', text:`${d.name} battery at ${d.battery}%`, rationale:'Battery below 20% — risk of shutdown and data loss.'});
+        }
+        // High temp
+        if(d.metrics.temp !== undefined && d.metrics.temp > 75){
+          alerts.push({id:d.id,type:'High Temperature', text:`${d.name} temperature ${d.metrics.temp}°C`, rationale:'Temp above safe threshold (>75°C). Check ambient heat or sensor fault.'});
+        }
+        // Rapid battery drop heuristic: if battery dropped >15% in 1 minute
+        if(d._prevBattery !== undefined && (d._prevBattery - d.battery) > 15){
+          alerts.push({id:d.id,type:'Rapid Battery Drop', text:`${d.name} battery fell ${d._prevBattery - d.battery}% quickly`, rationale:'Unusual discharge — possible short, faulty battery or firmware issue.'});
+        }
+        // Motion flood for motion detectors
+        if(d.type.includes('Motion') && d.metrics.motion_count !== undefined && d.metrics.motion_count > 15){
+          alerts.push({id:d.id,type:'High Motion', text:`${d.name} reported ${d.metrics.motion_count} events`, rationale:'High motion events — possible intrusion or noisy environment.'});
+        }
+        // Door left open (many opens)
+        if(d.type.includes('Door') && d.metrics.open_count !== undefined && d.metrics.open_count > 5){
+          alerts.push({id:d.id,type:'Door Activity', text:`${d.name} open_count ${d.metrics.open_count}`, rationale:'Frequent opens — security or operational anomaly.'});
+        }
+      }
+      return alerts;
+    }
+
+    function renderAlerts(){
+      const panel = document.getElementById('alertsPanel');
+      panel.innerHTML = '';
+      const alerts = computeAlerts();
+      if(alerts.length===0){ panel.innerHTML = '<div class="text-slate-500">No alerts — systems nominal.</div>'; return; }
+      for(const a of alerts){
+        const el = document.createElement('div');
+        el.className = 'p-2 rounded border-l-4 border-red-400 bg-red-50';
+        el.innerHTML = `<div class="text-sm font-medium">${escapeHtml(a.type)}</div>
+                        <div class="text-xs text-slate-700">${escapeHtml(a.text)}</div>
+                        <div class="text-xs text-slate-500 italic mt-1">Rationale: ${escapeHtml(a.rationale)}</div>`;
+        panel.appendChild(el);
+      }
+    }
+
+    function renderDevicesGrid(){
+      const grid = document.getElementById('devicesGrid');
+      grid.innerHTML = '';
+      for(const d of devices){
+        const card = document.createElement('div');
+        card.className = 'bg-white p-4 rounded-2xl shadow hover:shadow-lg transition';
+        const metricsHtml = Object.entries(d.metrics).map(([k,v])=>`<div class="text-sm text-slate-600"><span class="font-medium">${escapeHtml(k)}:</span> ${escapeHtml(String(v))}</div>`).join('');
+        const batteryColor = d.battery>50 ? 'text-green-600' : d.battery>20 ? 'text-amber-600' : 'text-red-600';
+        card.innerHTML = `
+          <div class="flex justify-between items-start gap-2">
+            <div>
+              <div class="text-sm text-slate-500">${escapeHtml(d.id)}</div>
+              <div class="text-lg font-semibold">${escapeHtml(d.name)}</div>
+              <div class="text-xs text-slate-400">${escapeHtml(d.type)} • ${formatTime(d.lastSeen)}</div>
+            </div>
+            <div class="text-right">
+              <div class="inline-block px-3 py-1 text-xs rounded-full ${d.online? 'bg-green-100 text-green-800':'bg-slate-100 text-slate-600'}">${d.online? 'Online':'Offline'}</div>
+              <div class="text-sm mt-2 font-semibold ${batteryColor}">${d.battery}%</div>
+            </div>
+          </div>
+          <div class="mt-3 border-t pt-3 space-y-1">${metricsHtml}</div>
+          <div class="mt-3 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <label class="flex items-center gap-2 text-sm">
+                <input data-id="${d.id}" type="checkbox" class="power-toggle" ${d.powered? 'checked':''}/> <span>Power</span>
+              </label>
+              <button data-id="${d.id}" class="btn-reboot text-xs px-3 py-1 rounded bg-amber-50 border text-amber-600">Reboot</button>
+            </div>
+            <div class="text-xs text-slate-500">Last seen: ${timeAgo(d.lastSeen)}</div>
+          </div>
+        `;
+
+        setTimeout(()=>{
+          const pw = card.querySelector('.power-toggle'); pw.addEventListener('change', (e)=>{
+            const id = e.target.getAttribute('data-id'); togglePower(id,e.target.checked);
+          });
+          const rb = card.querySelector('.btn-reboot'); rb.addEventListener('click', ()=>{
+            const id = rb.getAttribute('data-id'); if(confirm('Reboot ' + id + '?')) rebootDevice(id);
+          });
+        },0);
+
+        grid.appendChild(card);
+      }
+    }
+
+    // -------------------- Actions --------------------
+    function togglePower(id, on){
+      const d = devices.find(x=>x.id===id); if(!d) return;
+      d.powered = on;
+      // powering off forces offline
+      if(!on) d.online = false;
+      d.lastSeen = Date.now();
+      renderAll();
+    }
+
+    function rebootDevice(id){
+      const d = devices.find(x=>x.id===id); if(!d) return;
+      d.online = false; renderAll();
+      // simulate reboot delay
+      setTimeout(()=>{ d.online = true; d.lastSeen = Date.now(); renderAll(); }, 2000 + randBetween(0,3000));
+    }
+
+    // -------------------- Gemini AI feature --------------------
+    function renderGemini(){
+      const panel = document.getElementById('gemini'); panel.innerHTML = '';
+      const insights = [];
+      // heuristic: many devices low battery
+      const lowBatteryCount = devices.filter(d=> d.battery<=30).length;
+      if(lowBatteryCount >= 3) insights.push(`Multiple devices (${lowBatteryCount}) have battery <=30% — consider scheduling battery replacements or checking charging circuits.`);
+      // heuristic: temp hotspots
+      const highTemp = devices.filter(d=> d.metrics.temp !== undefined && d.metrics.temp > 60).length;
+      if(highTemp >= 1) insights.push(`High temperature detected on ${highTemp} device(s). Investigate thermal sources or sensor calibration.`);
+      // heuristic: many offline
+      const offline = devices.filter(d=> !d.online).length;
+      if(offline >= 2) insights.push(`${offline} devices are offline — check network health or gateway availability.`);
+      // heuristic: motion anomalies
+      const motionFlood = devices.filter(d=> d.type.includes('Motion') && d.metrics.motion_count > 12).length;
+      if(motionFlood) insights.push(`Motion detectors with high event counts (${motionFlood}) — possible intrusion or noisy sensors.`);
+      if(insights.length===0) insights.push('Gemini: No immediate operational recommendations. System appears stable.');
+      panel.innerHTML = insights.map(s=>`<div class="mb-2">• ${escapeHtml(s)}</div>`).join('');
+    }
+
+    // -------------------- Auto-refresh simulation --------------------
+    function startAutoRefresh(intervalMs){
+      stopAutoRefresh();
+      if(intervalMs<=0) return;
+      refreshTimer = setInterval(()=>{ simulateTelemetry(); renderAll(); }, intervalMs);
+    }
+    function stopAutoRefresh(){ if(refreshTimer){ clearInterval(refreshTimer); refreshTimer=null; } }
+
+    function simulateTelemetry(){
+      const nowTs = Date.now();
+      for(const d of devices){
+        // random online flaps
+        if(Math.random() < 0.03) d.online = !d.online;
+        // battery drain if powered and online
+        d._prevBattery = d.battery;
+        if(d.powered && d.online) d.battery = Math.max(0, d.battery - +(Math.random()*2).toFixed(2));
+        // small battery charge if not powered but plugged? (skip)
+        // update metrics slightly
+        for(const k of Object.keys(d.metrics)){
+          if(k==='temp') d.metrics.temp = +(d.metrics.temp + (Math.random()*4-2)).toFixed(1);
+          if(k==='humidity') d.metrics.humidity = +(d.metrics.humidity + (Math.random()*3-1.5)).toFixed(1);
+          if(k==='motion_count') d.metrics.motion_count = Math.max(0, d.metrics.motion_count + randBetween(0,2));
+          if(k==='open_count') d.metrics.open_count = d.metrics.open_count + randBetween(0,1);
+          if(k==='brightness') d.metrics.brightness = Math.max(0, Math.min(100, d.metrics.brightness + randBetween(-5,5)));
+          if(k==='power') d.metrics.power = d.powered? 'on':'off';
+        }
+        // update lastSeen if online
+        if(d.online) d.lastSeen = nowTs;
+      }
+      // prune devices with battery 0 and offline for long time? keep for demo
+    }
+
+    // -------------------- Utilities --------------------
+    function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function timeAgo(ts){ const s=Math.floor((Date.now()-ts)/1000); if(s<60) return s + 's ago'; if(s<3600) return Math.floor(s/60)+'m ago'; return Math.floor(s/3600)+'h ago'; }
+
+    // -------------------- Controls --------------------
+    document.getElementById('addDeviceBtn').addEventListener('click', ()=> addDemoDevice());
+    document.getElementById('resetBtn').addEventListener('click', ()=>{ if(confirm('Reset devices?')){ devices=[]; deviceSeq=1; renderAll(); }});
+    document.getElementById('refreshSelect').addEventListener('change', (e)=>{ const ms=parseInt(e.target.value,10); startAutoRefresh(ms); });
+
+    // seed demo devices
+    for(let i=0;i<6;i++) addDemoDevice();
+
+    // expose for debugging
+    window.IoTDash = { devices, addDemoDevice, simulateTelemetry };
+
+    // initial render
+    renderAll();
+  </script>
+</body>
+</html>
